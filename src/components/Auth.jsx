@@ -9,7 +9,7 @@ const C = {
 };
 const DISPLAY = "'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif";
 const input = {
-  width: "100%", padding: "12px 14px", borderRadius: 11, border: `1px solid ${C.line}`,
+  width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 11, border: `1px solid ${C.line}`,
   background: C.surface, color: C.ink, fontSize: 14.5, marginBottom: 10,
 };
 
@@ -37,9 +37,9 @@ export default function Auth() {
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, display: "grid", placeItems: "center", padding: 22, fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Inter:wght@400;500;600&display=swap');`}</style>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Inter:wght@400;500;600&display=swap'); * { box-sizing: border-box; }`}</style>
       <div style={{ width: "min(400px, 100%)" }}>
-        <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 15, color: C.accent, marginBottom: 14 }}>여정 · Yeojeong</div>
+        <div style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 15, color: C.accent, marginBottom: 14 }}>Travel</div>
         <h1 style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 28, letterSpacing: "-0.02em", margin: "0 0 6px", color: C.ink }}>
           {mode === "signup" ? "함께 떠날 준비" : "다시 오셨네요"}
         </h1>

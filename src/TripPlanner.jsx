@@ -80,6 +80,21 @@ function money(n, sym) {
   return `${sym}${Math.round(n).toLocaleString()}`;
 }
 
+// 장소 이름으로 좌표 찾기 (OpenStreetMap Nominatim · 무료, 키 불필요)
+async function geocode(query) {
+  if (!query || !query.trim()) return null;
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query.trim())}`;
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    const data = await res.json();
+    if (Array.isArray(data) && data.length) {
+      const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
+      if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
+    }
+  } catch (_) {}
+  return null;
+}
+
 const ICON_FOR_WEATHER = (s = "") => {
   s = s.toLowerCase();
   if (/(비|rain|소나기|shower)/.test(s)) return CloudRain;
@@ -202,7 +217,7 @@ function HomeScreen({ trips, onNew, onOpen, onDelete, onImport, storageOK }) {
     <div className="tp-fade" style={{ maxWidth: 1040, margin: "0 auto", padding: "56px 22px 90px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, color: C.accent, marginBottom: 26 }}>
         <Compass size={20} />
-        <span style={{ fontFamily: DISPLAY, fontWeight: 700, letterSpacing: "-0.01em", fontSize: 15 }}>여정 · Yeojeong</span>
+        <span style={{ fontFamily: DISPLAY, fontWeight: 700, letterSpacing: "-0.01em", fontSize: 15 }}>Travel</span>
       </div>
 
       {/* hero CTA */}
@@ -210,7 +225,7 @@ function HomeScreen({ trips, onNew, onOpen, onDelete, onImport, storageOK }) {
         <div style={{ background: `linear-gradient(135deg, ${C.accentDeep}, ${C.accent})`, borderRadius: 22, padding: "38px 30px", color: "#fff", position: "relative", overflow: "hidden" }}>
           <Plane size={130} style={{ position: "absolute", right: -18, bottom: -28, opacity: 0.12, transform: "rotate(-18deg)" }} />
           <h1 style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 34, lineHeight: 1.1, letterSpacing: "-0.02em", margin: "0 0 10px" }}>
-            다음 여정을<br />계획해 볼까요?
+            다음 여행을<br />계획해 볼까요?
           </h1>
           <p style={{ fontSize: 14.5, opacity: 0.85, maxWidth: 420, margin: "0 0 22px" }}>
             여행지만 알려주면 동선·숙소·맛집까지 한 번에. 지난 여행 기록도 여기 모여요.
@@ -409,7 +424,7 @@ function Setup({ onStart, onCancel }) {
       </button>
       <div style={{ display: "flex", alignItems: "center", gap: 10, color: C.accent, marginBottom: 18 }}>
         <Compass size={20} />
-        <span style={{ fontFamily: DISPLAY, fontWeight: 700, letterSpacing: "-0.01em", fontSize: 15 }}>여정 · Yeojeong</span>
+        <span style={{ fontFamily: DISPLAY, fontWeight: 700, letterSpacing: "-0.01em", fontSize: 15 }}>Travel</span>
       </div>
       <h1 style={{ fontFamily: DISPLAY, fontWeight: 700, fontSize: 40, lineHeight: 1.08, letterSpacing: "-0.02em", margin: "0 0 12px" }}>
         어디로<br />떠나시나요?
@@ -501,6 +516,16 @@ function Setup({ onStart, onCancel }) {
 function AppShell({ trip, setTrip, tab, setTab, onHome, storageOK }) {
   const sym = trip.cur.sym;
   const update = (patch) => setTrip((t) => ({ ...t, ...patch }));
+  // 비동기(위치 찾기)에도 안전하도록 stop을 id로 직접 갱신
+  const patchStop = (dayId, stopId, patch) =>
+    setTrip((t) => ({
+      ...t,
+      itinerary: (t.itinerary || []).map((d) =>
+        d.id === dayId
+          ? { ...d, stops: d.stops.map((s) => (s.id === stopId ? { ...s, ...patch } : s)) }
+          : d
+      ),
+    }));
 
   const tabs = [
     { id: "plan", label: "일정", icon: Calendar },
@@ -559,7 +584,7 @@ function AppShell({ trip, setTrip, tab, setTab, onHome, storageOK }) {
             “{trip.summary}”
           </p>
         )}
-        {tab === "plan" && <PlanTab trip={trip} update={update} sym={sym} />}
+        {tab === "plan" && <PlanTab trip={trip} update={update} patchStop={patchStop} sym={sym} />}
         {tab === "stay" && <StayTab trip={trip} update={update} sym={sym} />}
         {tab === "eat" && <EatTab trip={trip} update={update} />}
         {tab === "budget" && <BudgetTab trip={trip} update={update} sym={sym} />}
@@ -570,7 +595,7 @@ function AppShell({ trip, setTrip, tab, setTab, onHome, storageOK }) {
 }
 
 /* --------------------------------- PLAN TAB -------------------------------- */
-function PlanTab({ trip, update, sym }) {
+function PlanTab({ trip, update, patchStop, sym }) {
   const [active, setActive] = useState(0);
   const day = trip.itinerary[active];
   if (!day) return null;
@@ -579,6 +604,14 @@ function PlanTab({ trip, update, sym }) {
     const it = trip.itinerary.slice();
     it[active] = newDay;
     update({ itinerary: it });
+  };
+
+  // 장소 이름으로 좌표 찾아서 채우기 (비동기 — patchStop으로 안전하게 갱신)
+  const locateStop = async (dayId, stopId, name) => {
+    if (!name || !name.trim()) return;
+    patchStop(dayId, stopId, { _geo: "loading" });
+    const found = await geocode(`${name} ${trip.destination || ""}`);
+    patchStop(dayId, stopId, found ? { lat: found.lat, lng: found.lng, _geo: "ok" } : { _geo: "none" });
   };
 
   const moveStop = (i, dir) => {
@@ -590,7 +623,11 @@ function PlanTab({ trip, update, sym }) {
   };
   const delStop = (id) => setDay({ ...day, stops: day.stops.filter((s) => s.id !== id) });
   const editStop = (id, patch) => setDay({ ...day, stops: day.stops.map((s) => (s.id === id ? { ...s, ...patch } : s)) });
-  const addStop = (s) => setDay({ ...day, stops: [...day.stops, { id: uid(), lat: null, lng: null, cost: 0, ...s }] });
+  const addStop = (s) => {
+    const id = uid();
+    setDay({ ...day, stops: [...day.stops, { id, lat: null, lng: null, cost: 0, ...s }] });
+    if (s.name && s.name.trim()) locateStop(day.id, id, s.name.trim()); // 추가하면 자동으로 위치 찾기
+  };
 
   const dayTotal = day.stops.reduce((a, s) => a + (Number(s.cost) || 0), 0);
   const W = day.weather ? ICON_FOR_WEATHER(day.weather.summary) : null;
@@ -644,6 +681,7 @@ function PlanTab({ trip, update, sym }) {
           {day.stops.map((s, i) => (
             <StopRow key={s.id} index={i} stop={s} sym={sym}
               onMove={(d) => moveStop(i, d)} onDelete={() => delStop(s.id)} onEdit={(p) => editStop(s.id, p)}
+              onLocate={() => locateStop(day.id, s.id, s.name)}
               isFirst={i === 0} isLast={i === day.stops.length - 1} />
           ))}
           <AddStop onAdd={addStop} />
@@ -658,7 +696,7 @@ function PlanTab({ trip, update, sym }) {
   );
 }
 
-function StopRow({ index, stop, sym, onMove, onDelete, onEdit, isFirst, isLast }) {
+function StopRow({ index, stop, sym, onMove, onDelete, onEdit, onLocate, isFirst, isLast }) {
   const [edit, setEdit] = useState(false);
   const meta = TYPE_META[stop.type] || TYPE_META.sight;
   const Icon = meta.icon;
@@ -685,6 +723,11 @@ function StopRow({ index, stop, sym, onMove, onDelete, onEdit, isFirst, isLast }
             </div>
             <input value={stop.name} onChange={(e) => onEdit({ name: e.target.value })} placeholder="장소 이름" style={inputStyle} />
             <input value={stop.note} onChange={(e) => onEdit({ note: e.target.value })} placeholder="메모" style={inputStyle} />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="number" value={stop.lat ?? ""} onChange={(e) => onEdit({ lat: e.target.value === "" ? null : Number(e.target.value) })} placeholder="위도 37.57" style={{ ...inputStyle, flex: 1 }} />
+              <input type="number" value={stop.lng ?? ""} onChange={(e) => onEdit({ lng: e.target.value === "" ? null : Number(e.target.value) })} placeholder="경도 126.98" style={{ ...inputStyle, flex: 1 }} />
+              <button onClick={onLocate} title="이름으로 위치 자동 찾기" style={miniBtn(C.inkSoft, false)}><MapPin size={14} /> 자동</button>
+            </div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button onClick={() => setEdit(false)} style={miniBtn(C.accent, true)}><Check size={14} /> 완료</button>
             </div>
@@ -697,6 +740,19 @@ function StopRow({ index, stop, sym, onMove, onDelete, onEdit, isFirst, isLast }
                 <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99, background: C.surfaceAlt, color: C.inkSoft, display: "inline-flex", alignItems: "center", gap: 4 }}>
                   <Icon size={11} /> {meta.label}
                 </span>
+                {stop.lat != null ? (
+                  <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99, background: C.accentSoft, color: C.accentDeep, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <MapPin size={11} /> 지도 표시됨
+                  </span>
+                ) : stop._geo === "loading" ? (
+                  <span style={{ fontSize: 11, color: C.inkFaint, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <Loader2 size={11} className="tp-spin" /> 위치 찾는 중…
+                  </span>
+                ) : (
+                  <button onClick={onLocate} style={{ fontSize: 11, padding: "2px 9px", borderRadius: 99, border: `1px solid ${C.line}`, background: C.surface, color: C.inkSoft, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <MapPin size={11} /> {stop._geo === "none" ? "못 찾음 · 다시" : "위치 찾기"}
+                  </button>
+                )}
               </div>
               <div style={{ fontWeight: 600, fontSize: 15.5, marginTop: 6 }}>{stop.name || "이름 없음"}</div>
               {stop.note && <div style={{ color: C.inkSoft, fontSize: 13.5, marginTop: 3 }}>{stop.note}</div>}
